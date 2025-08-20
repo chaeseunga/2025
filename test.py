@@ -1,7 +1,9 @@
-# chem_safety_app.py
-# 실행: streamlit run chem_safety_app.py
+# chem_safety_app_v2.py
+# 실행: streamlit run chem_safety_app_v2.py
 
 import streamlit as st
+import itertools
+import re
 
 # =========================
 # 데이터(키워드/규칙/설명)
@@ -17,12 +19,12 @@ ALIASES = {
 }
 
 HAZARDOUS_RULES = {
-    frozenset({"bleach", "ammonia"}): "‘표백제+암모니아’ 혼합은 매우 위험합니다.",
-    frozenset({"bleach", "acid"}): "‘표백제+산(식초/구연산/염산 등)’ 혼합은 매우 위험합니다.",
-    frozenset({"bleach", "alcohol"}): "‘표백제+알코올’ 혼합은 위험합니다.",
-    frozenset({"peroxide", "acid"}): "‘과산화수소+산’ 혼합은 위험합니다.",
-    frozenset({"baking_soda", "acid"}): "‘베이킹소다+산’은 밀폐 용기에서 위험할 수 있습니다.",
-    frozenset({"bleach", "quat"}): "‘표백제+4급암모늄(소독제)’ 혼합은 피하세요.",
+    frozenset({"bleach", "ammonia"}): ("☠️ 독성 가스", "‘표백제+암모니아’ 혼합은 매우 위험합니다."),
+    frozenset({"bleach", "acid"}): ("🫁 염소 가스", "‘표백제+산(식초/구연산/염산 등)’ 혼합은 매우 위험합니다."),
+    frozenset({"bleach", "alcohol"}): ("🧠 신경 독성", "‘표백제+알코올’ 혼합은 위험합니다."),
+    frozenset({"peroxide", "acid"}): ("🧯 부식성", "‘과산화수소+산’ 혼합은 위험합니다."),
+    frozenset({"baking_soda", "acid"}): ("💥 압력 폭발", "‘베이킹소다+산’은 밀폐 용기에서 위험할 수 있습니다."),
+    frozenset({"bleach", "quat"}): ("⚠️ 효과 저하", "‘표백제+4급암모늄(소독제)’ 혼합은 피하세요."),
 }
 
 HAZ_DETAILS = {
@@ -34,7 +36,7 @@ HAZ_DETAILS = {
     frozenset({"bleach", "acid"}): {
         "why": "섞이면 ‘염소 가스(Cl₂)’가 생겨 호흡기에 심한 자극을 줍니다.",
         "symptoms": "눈물, 기침, 가슴 답답, 호흡 곤란.",
-        "instead": "표백제와 식초·구연산·염산 계열은 절대 함께 쓰지 마세요. 필요하면 다른 날 따로 사용하세요.",
+        "instead": "표백제와 산 계열은 절대 함께 쓰지 마세요. 필요하면 다른 날 따로 사용하세요.",
     },
     frozenset({"bleach", "alcohol"}): {
         "why": "특정 조건에서 독성 부산물(클로로포름 등)이 생길 수 있습니다.",
@@ -85,28 +87,30 @@ SURFACE_GUIDE = {
 # 함수
 # =========================
 def normalize_token(token: str) -> set:
+    """입력값에서 해당하는 키워드 집합 반환"""
     token = token.strip().lower()
     hits = set()
     for key, variants in ALIASES.items():
         for v in variants:
-            if v.lower() in token:
+            if re.search(rf"\b{re.escape(v.lower())}\b", token):
                 hits.add(key)
     if token in ALIASES.keys():
         hits.add(token)
     return hits
 
 def check_mixture(items: list):
+    """2개, 3개 조합 모두 체크"""
     keys = set()
     for raw in items:
         keys |= normalize_token(raw)
     messages, details = [], []
-    klist = list(keys)
-    for i in range(len(klist)):
-        for j in range(i+1, len(klist)):
-            combo = frozenset({klist[i], klist[j]})
-            if combo in HAZARDOUS_RULES:
-                messages.append(HAZARDOUS_RULES[combo])
-                details.append(HAZ_DETAILS.get(combo))
+    for r in (2, 3):
+        for combo in itertools.combinations(keys, r):
+            combo_set = frozenset(combo)
+            if combo_set in HAZARDOUS_RULES:
+                cat, msg = HAZARDOUS_RULES[combo_set]
+                messages.append((cat, msg))
+                details.append(HAZ_DETAILS.get(combo_set))
     return keys, messages, details
 
 def dilution_calc(c1, c2, v2):
@@ -119,23 +123,8 @@ def dilution_calc(c1, c2, v2):
 # =========================
 # UI
 # =========================
-st.set_page_config(page_title="화학 안전 도우미", page_icon="🧹")
-st.title("🧹 화학 안전 도우미")
-
-st.markdown(
-    """
-**이 앱으로 할 수 있는 것**  
-- ❌ 섞으면 위험한 세제 조합 확인  
-- 🧪 원액을 물에 얼마나 타야 하는지 계산  
-- 🏠 표면(대리석·목재·스테인리스 등)에 맞는 사용 가이드 보기  
-
-**청소 기본 수칙**  
-1) 한 번에 **하나의 제품만** 사용  
-2) **환기** 잘하기(창문 열기/선풍기)  
-3) 제품 라벨의 **혼합 금지 문구** 확인  
-4) 원액은 가능하면 **희석해서** 사용
-"""
-)
+st.set_page_config(page_title="화학 안전 도우미 v2", page_icon="🧹")
+st.title("🧹 화학 안전 도우미 v2")
 
 menu = st.sidebar.radio("메뉴", ["혼합 안전 확인", "희석 계산", "표면별 가이드"])
 
@@ -144,21 +133,23 @@ menu = st.sidebar.radio("메뉴", ["혼합 안전 확인", "희석 계산", "표
 # -------------------------
 if menu == "혼합 안전 확인":
     st.subheader("⚠️ 세제/성분 혼합 안전 확인")
-    raw = st.text_input("세제/성분 입력(쉼표로 구분)", "락스, 식초")
+
+    all_options = sorted({v for s in ALIASES.values() for v in s})
+    selected = st.multiselect("세제/성분 선택", options=all_options, default=["락스", "식초"])
+
     if st.button("확인하기"):
-        items = [x.strip() for x in raw.split(",") if x.strip()]
-        keys, messages, details = check_mixture(items)
+        keys, messages, details = check_mixture(selected)
 
         if keys:
-            st.write("인식된 성분:", ", ".join(sorted(keys)) or "(없음)")
+            st.info("인식된 성분: " + ", ".join(sorted(keys)) or "(없음)")
         if messages:
-            for idx, m in enumerate(messages, 1):
-                st.error(f"{idx}. {m}")
-            st.markdown("### 왜 위험한가? / 어떻게 해야 안전한가?")
+            for idx, (cat, m) in enumerate(messages, 1):
+                st.error(f"{idx}. {cat} → {m}")
+            st.markdown("### 상세 설명")
             for d in details:
                 if not d:
                     continue
-                with st.expander("상세 설명"):
+                with st.expander("자세히 보기"):
                     st.write("• **이유**:", d["why"])
                     st.write("• **증상**:", d["symptoms"])
                     st.write("• **대신 이렇게 사용하세요**:", d["instead"])
@@ -181,8 +172,8 @@ elif menu == "희석 계산":
         if v1 is None:
             st.error("입력값을 확인하세요. (C1 > C2 > 0, V2 > 0)")
         else:
-            st.success(f"필요한 원액: 약 {v1:.1f} mL")
-            st.info(f"물: 약 {solvent:.1f} mL")
+            st.metric("필요한 원액 (mL)", f"{v1:.1f}")
+            st.metric("필요한 물 (mL)", f"{solvent:.1f}")
             st.caption("원액을 물에 조금씩 넣어 섞어주세요. 사용 후 환기·헹굼 필수!")
 
 # -------------------------
